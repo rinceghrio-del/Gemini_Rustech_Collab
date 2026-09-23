@@ -27,14 +27,35 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Decode keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $GITHUB_WORKSPACE/rustech-debug.keystore
+      # Gamitin ang keystore mula sa secrets kung valid. Kung wala/sira (hal. bagong repo na walang secrets),
+      # gagawa ng bagong keystore para hindi pumalya ang build.
+      - name: Prepare keystore
+        env:
+          KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          KS="$GITHUB_WORKSPACE/rustech-debug.keystore"
+          PASS="$KS_PASS"
+          OK=0
+          if [ -n "$KS_B64" ] && [ -n "$PASS" ]; then
+            echo "$KS_B64" | base64 -d > "$KS" || true
+            if keytool -list -keystore "$KS" -storepass "$PASS" -alias rustech >/dev/null 2>&1; then
+              OK=1
+            fi
+          fi
+          if [ "$OK" = "0" ]; then
+            echo "::warning::Invalid/missing keystore secret - gumawa ng bagong keystore. I-uninstall muna ang lumang app bago i-install ang APK na ito."
+            rm -f "$KS"
+            PASS="rustech123"
+            keytool -genkeypair -keystore "$KS" -storetype PKCS12 -alias rustech \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$PASS" -keypass "$PASS" -dname "CN=Rustech"
+          fi
+          echo "KEYSTORE_PATH=$KS" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
 
       - name: Build debug APK
         run: gradle assembleDebug
-        env:
-          KEYSTORE_PATH: ${{ github.workspace }}/rustech-debug.keystore
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
 
       - name: Upload APK as downloadable artifact
         uses: actions/upload-artifact@v4
